@@ -1,0 +1,79 @@
+name: AERO SHARE Android Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find project archive
+        id: archive
+        shell: bash
+        run: |
+          ARCHIVE=$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "Project ZIP archive not found"
+            exit 1
+          fi
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Extract project
+        run: |
+          mkdir -p extracted
+          unzip -q "${{ steps.archive.outputs.archive }}" -d extracted
+
+      - name: Locate Gradle project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_DIR=$(find extracted -name settings.gradle.kts -printf '%h\n' | head -n 1)
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Gradle project not found"
+            exit 1
+          fi
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Run unit tests
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: gradle testDebugUnitTest --no-daemon
+
+      - name: Build APK
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: gradle assembleDebug --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          find "${{ steps.project.outputs.dir }}" -path '*/build/outputs/apk/debug/*.apk' -type f -print -quit | grep -q '.'
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AERO-SHARE-APK
+          path: ${{ steps.project.outputs.dir }}/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
